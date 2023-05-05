@@ -58,8 +58,7 @@ fn main() {
         std::fs::write("private.pem", private_key.private_key_to_pem().unwrap()).unwrap();
         std::fs::write("public.pem", public_key.public_key_to_pem().unwrap()).unwrap();
 
-
-        file_crypter = FileCrypter::new(public_key, private_key);
+        file_crypter = FileCrypter::decrypter(private_key).expect("Failed to create decrypter");
 
 
     } else if args.private_key.is_none() && args.public_key.is_some() {
@@ -73,11 +72,7 @@ fn main() {
             Rsa::private_key_from_pem(&std::fs::read(args.private_key.unwrap()).unwrap())
                 .unwrap();
 
-        let public_key =
-            Rsa::public_key_from_pem(private_key.public_key_to_pem().unwrap().as_ref())
-                .unwrap();
-
-        file_crypter = FileCrypter::new(public_key, private_key);
+        file_crypter = FileCrypter::decrypter(private_key).expect("Failed to create decrypter");
     }
 
     if args.encrypt {
@@ -112,6 +107,4 @@ fn main() {
         println!("File name: {}", metadata.file_name);
         return;
     }
-
-    println!("Hello, world!");
 }
