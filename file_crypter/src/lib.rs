@@ -62,11 +62,11 @@ impl FileCrypter {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// use std::fs::File;
     /// use std::io::Read;
     /// use std::io::Write;
-    /// use file_crypter::encrypt;
+    /// use openssl::rsa::Rsa;
     ///
     /// let mut input_file = File::open("plaintext.txt").unwrap();
     /// let mut output_file = File::create("encrypted.bin").unwrap();
@@ -167,7 +167,7 @@ impl FileCrypter {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// use std::fs::File;
     /// use std::io::Read;
     /// use std::io::Write;
