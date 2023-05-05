@@ -1,15 +1,14 @@
-use clap::{Arg, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use file_crypter::FileCrypter;
-use glob::GlobResult;
 use openssl::rsa::Rsa;
 use rayon::iter::IntoParallelRefIterator;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Seek};
 use std::path::PathBuf;
 use uuid::Uuid;
-use rayon::prelude::*;
 
 extern crate file_crypter;
 extern crate glob;
@@ -38,7 +37,7 @@ struct Args {
     #[arg(long)]
     same_dir: bool,
 
-    #[arg(long, default_value="4")]
+    #[arg(long, default_value = "4")]
     threads: usize,
 }
 
@@ -49,7 +48,7 @@ struct FileMetadata {
 }
 
 fn main() {
-    let mut args = Args::parse();
+    let args = Args::parse();
 
     if (args.encrypt && args.decrypt) || (!args.encrypt && !args.decrypt) {
         eprintln!("You must specify either --encrypt or --decrypt");
@@ -86,13 +85,9 @@ fn main() {
         eprintln!("Input path must be a directory");
     }
 
-    let mut pattern = "**/*";
+    let pattern = if args.decrypt { "**/*.enc" } else { "**/*" };
 
-    if args.decrypt {
-        pattern = "**/*.enc";
-    }
-
-    let mut files: Vec<PathBuf> = glob::glob(args.file_path.join(pattern).to_str().unwrap())
+    let files: Vec<PathBuf> = glob::glob(args.file_path.join(pattern).to_str().unwrap())
         .unwrap()
         .filter_map(Result::ok)
         .collect();
