@@ -190,6 +190,46 @@ impl FileCrypter {
         W: Write,
         for<'a> T: Deserialize<'a>,
     {
+        let (metadata, cipher, mut decrypter) = self.grab_metadata(reader)?;
+
+        // Decrypt the file contents with the AES key
+        let mut buffer = [0u8; BUFFER_LEN];
+        let mut encrypted_chunk = vec![0; BUFFER_LEN + cipher.block_size()];
+
+        loop {
+            let read_count = reader.read(&mut buffer)?;
+
+            if read_count == 0 {
+                break;
+            }
+
+            let count = decrypter.update(&buffer[..read_count], &mut encrypted_chunk)?;
+            writer.write_all(&encrypted_chunk[..count])?;
+        }
+
+        let count = decrypter.finalize(&mut encrypted_chunk)?;
+
+        writer.write_all(&encrypted_chunk[..count])?;
+        writer.flush()?;
+
+        Ok(metadata)
+    }
+
+    pub fn fetch_metadata<R, T>(&self, reader: &mut R) -> Result<T, FileCrypterError>
+    where
+        R: Read,
+        for<'a> T: Deserialize<'a>,
+    {
+        let (metadata, _, _) = self.grab_metadata(reader)?;
+        
+        Ok(metadata)
+    }
+
+    fn grab_metadata<R, T>(&self, reader: &mut R) -> Result<(T, Cipher, Crypter), FileCrypterError>
+    where
+        R: Read,
+        for<'a> T: Deserialize<'a>,
+    {
         if self.private_key.is_none() {
             return Err(FileCrypterError::MissingKey);
         }
@@ -234,12 +274,12 @@ impl FileCrypter {
 
         aes_key.truncate(aes_key_len);
 
-        // Read the length of the encrypted file name
+        // Read the length of the encrypted metadata
         let mut encrypted_metadata_length = [0; 4];
         reader.read_exact(&mut encrypted_metadata_length)?;
         let encrypted_metadata_length = u32::from_be_bytes(encrypted_metadata_length) as usize;
 
-        // Read the encrypted file name
+        // Read the encrypted metadata
         let mut encrypted_metadata = vec![0; encrypted_metadata_length];
         reader.read_exact(&mut encrypted_metadata)?;
 
@@ -255,27 +295,7 @@ impl FileCrypter {
         // Deserialize the json
         let metadata: T = serde_json::from_slice(&decrypted_metadata)?;
 
-        // Decrypt the file contents with the AES key
-        let mut buffer = [0u8; BUFFER_LEN];
-        let mut encrypted_chunk = vec![0; BUFFER_LEN + cipher.block_size()];
-
-        loop {
-            let read_count = reader.read(&mut buffer)?;
-
-            if read_count == 0 {
-                break;
-            }
-
-            let count = decrypter.update(&buffer[..read_count], &mut encrypted_chunk)?;
-            writer.write_all(&encrypted_chunk[..count])?;
-        }
-
-        let count = decrypter.finalize(&mut encrypted_chunk)?;
-        writer.write_all(&encrypted_chunk[..count])?;
-
-        writer.flush()?;
-
-        Ok(metadata)
+        return Ok((metadata, cipher, decrypter));
     }
 }
 
