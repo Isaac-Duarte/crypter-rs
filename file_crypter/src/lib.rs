@@ -8,44 +8,48 @@ use openssl::rsa::{Padding, Rsa};
 use openssl::symm::{Cipher, Crypter, Mode};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
+use thiserror::Error;
 
 const BUFFER_LEN: usize = 1024 * 1024;
 const HEADER: &[u8; 12] = b"IDCRYPTER1.0";
 
+#[derive(Error, Debug)]
+pub enum FileCrypterError {
+    #[error("Either a private key or a public key must be provided.")]
+    MissingKey,
+
+    #[error("Invalid header")]
+    InvalidHeader,
+
+    #[error("Encryption error: {0}")]
+    EncryptionError(#[from] openssl::error::ErrorStack),
+
+    #[error("Serialization error: {0}")]
+    SerializationError(#[from] serde_json::Error),
+
+    #[error("IO error: {0}")]
+    IOError(#[from] std::io::Error),
+}
+
 pub struct FileCrypter {
     private_key: Option<Rsa<Private>>,
-    public_key: Option<Rsa<Public>>,
-    buffer_len: usize,
+    public_key: Rsa<Public>,
 }
 
 impl FileCrypter {
-    pub fn new(public_key: Rsa<Public>, private_key: Rsa<Private>) -> Self {
-        FileCrypter {
-            private_key: Some(private_key),
-            public_key: Some(public_key),
-            buffer_len: BUFFER_LEN,
-        }
-    }
-
     pub fn encrypter(public_key: Rsa<Public>) -> Self {
         FileCrypter {
+            public_key,
             private_key: None,
-            public_key: Some(public_key),
-            buffer_len: BUFFER_LEN,
         }
     }
 
-    pub fn decrypter(private_key: Rsa<Private>) -> Self {
-        FileCrypter {
+    pub fn decrypter(private_key: Rsa<Private>) -> Result<Self, FileCrypterError> {
+        let public_key = Rsa::public_key_from_pem(&private_key.public_key_to_pem()?)?;
+        Ok(FileCrypter {
+            public_key,
             private_key: Some(private_key),
-            public_key: None,
-            buffer_len: BUFFER_LEN,
-        }
-    }
-
-    pub fn buffer_len(&mut self, buffer_len: usize) -> &mut FileCrypter {
-        self.buffer_len = buffer_len;
-        self
+        })
     }
 
     /// Encrypts the contents of a file with AES-256 encryption algorithm and RSA public key encryption.
@@ -79,20 +83,18 @@ impl FileCrypter {
     ///
     /// assert!(result.is_ok());
     /// ```
-    pub fn encrypt<T>(
+    pub fn encrypt<R, W, T>(
         &self,
-        reader: &mut dyn Read,
-        writer: &mut dyn Write,
+        reader: &mut R,
+        writer: &mut W,
         metadata: &T,
-    ) -> Result<(), Box<dyn std::error::Error>>
+    ) -> Result<(), FileCrypterError>
     where
+        R: Read,
+        W: Write,
         T: Serialize,
     {
-        if self.public_key.is_none() {
-            return Err("Either a private key or a public key must be provided.".into());
-        }
-
-        let public_key = self.public_key.as_ref().unwrap();
+        let public_key = self.public_key.as_ref();
 
         // Generate an AES key 256 bits
         let aes_bytes = rand::random::<[u8; 32]>();
@@ -160,7 +162,7 @@ impl FileCrypter {
     ///
     /// * `reader` - A mutable reference to an object implementing the `Read` trait which is used to read the encrypted file contents.
     /// * `writer` - A mutable reference to an object implementing the `Write` trait which is used to write the decrypted file contents to disk.
-     ///
+    ///
     /// # Returns
     ///
     /// The metadata decrypted from the file on success, or a boxed dynamic error object implementing the `Error` trait on failure.
@@ -182,16 +184,14 @@ impl FileCrypter {
     ///
     /// assert!(result.is_ok());
     /// ```
-    pub fn decrypt<T>(
-        &self,
-        reader: &mut dyn Read,
-        writer: &mut dyn Write,
-    ) -> Result<T, Box<dyn std::error::Error>>
+    pub fn decrypt<R, W, T>(&self, reader: &mut R, writer: &mut W) -> Result<T, FileCrypterError>
     where
+        R: Read,
+        W: Write,
         for<'a> T: Deserialize<'a>,
     {
         if self.private_key.is_none() {
-            return Err("Either a private key or a public key must be provided.".into());
+            return Err(FileCrypterError::MissingKey);
         }
 
         let private_key = self.private_key.as_ref().unwrap();
@@ -201,7 +201,7 @@ impl FileCrypter {
         reader.read_exact(&mut header)?;
 
         if &header != HEADER {
-            return Err("Invalid header".into());
+            return Err(FileCrypterError::InvalidHeader);
         }
 
         // Read the first 4 bytes to get the length of the encrypted AES key
@@ -284,26 +284,27 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
     struct Metadata {
         file_name: String,
     }
 
-    #[test]
-    fn test_encryption_decryption() {
-        let data = "This is a test message".as_bytes();
-
+    fn create_file_crypter() -> FileCrypter {
         let rsa_key = Rsa::generate(2048).unwrap();
-        let file_crypter = FileCrypter::new(
-            Rsa::public_key_from_pem(&rsa_key.public_key_to_pem().unwrap()).unwrap(),
-            rsa_key,
-        );
+        FileCrypter::decrypter(rsa_key).expect("Unable to create file crypter")
+    }
+
+    #[test]
+    fn test_empty_file() {
+        let data = b"";
+
+        let file_crypter = create_file_crypter();
 
         let mut input_stream: Cursor<Vec<u8>> = Cursor::new(data.to_vec());
         let mut output_stream: Cursor<Vec<u8>> = Cursor::new(Vec::new());
 
         let metadata = Metadata {
-            file_name: "test.txt".to_string(),
+            file_name: "empty.txt".to_string(),
         };
 
         let result = file_crypter
@@ -314,11 +315,88 @@ mod tests {
         let mut input_stream: Cursor<Vec<u8>> = Cursor::new(output_stream.into_inner());
         let mut output_stream: Cursor<Vec<u8>> = Cursor::new(Vec::new());
 
-        let result: Metadata = file_crypter
+        let decrypted_metadata: Metadata = file_crypter
             .decrypt(&mut input_stream, &mut output_stream)
             .expect("Unable to decrypt");
 
-        assert_eq!(result.file_name, "test.txt");
+        assert_eq!(decrypted_metadata.file_name, "empty.txt");
         assert_eq!(output_stream.into_inner(), data);
+    }
+
+    #[test]
+    fn test_large_file() {
+        let data = vec![0u8; 1024 * 1024 * 10]; // 10 MB
+
+        let file_crypter = create_file_crypter();
+
+        let mut input_stream: Cursor<Vec<u8>> = Cursor::new(data.clone());
+        let mut output_stream: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+        let metadata = Metadata {
+            file_name: "large_file.bin".to_string(),
+        };
+
+        let result = file_crypter
+            .encrypt(&mut input_stream, &mut output_stream, &metadata)
+            .expect("Unable to encrypt");
+
+        // Now to test decryption
+        let mut input_stream: Cursor<Vec<u8>> = Cursor::new(output_stream.into_inner());
+        let mut output_stream: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+        let metadata: Metadata = file_crypter
+            .decrypt(&mut input_stream, &mut output_stream)
+            .expect("Unable to decrypt");
+
+        assert_eq!(metadata.file_name, "large_file.bin");
+        assert_eq!(output_stream.into_inner(), data);
+    }
+
+    #[test]
+    fn test_invalid_header() {
+        let data = b"InvalidHeader";
+
+        let file_crypter = create_file_crypter();
+
+        let mut input_stream: Cursor<Vec<u8>> = Cursor::new(data.to_vec());
+        let mut output_stream: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+        let result: Result<Metadata, FileCrypterError> =
+            file_crypter.decrypt(&mut input_stream, &mut output_stream);
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(FileCrypterError::InvalidHeader)));
+    }
+
+    #[test]
+    fn test_wrong_private_key() {
+        let data = b"Hello, world!";
+
+        let file_crypter = create_file_crypter();
+
+        let mut input_stream: Cursor<Vec<u8>> = Cursor::new(data.to_vec());
+        let mut output_stream: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+        let metadata = Metadata {
+            file_name: "hello.txt".to_string(),
+        };
+
+        let result = file_crypter
+            .encrypt(&mut input_stream, &mut output_stream, &metadata)
+            .expect("Unable to encrypt");
+
+        // Now to test decryption with the wrong private key
+        let rsa_key = Rsa::generate(2048).unwrap();
+        let wrong_file_crypter = FileCrypter::decrypter(rsa_key);
+
+        let mut input_stream: Cursor<Vec<u8>> = Cursor::new(output_stream.into_inner());
+        let mut output_stream: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+        let result: Result<Metadata, FileCrypterError> = wrong_file_crypter
+            .expect("Unable to create crypter")
+            .decrypt(&mut input_stream, &mut output_stream);
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(FileCrypterError::EncryptionError(_))));
     }
 }

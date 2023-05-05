@@ -4,39 +4,39 @@ This is a Rust crate that provides a simple interface for encrypting and decrypt
 
 ## Usage
 
-### Creating a new `FileCrypter` instance
-
-You can create a new instance of `FileCrypter` by calling its constructor `new` with a public key and a private key. Alternatively, you can create an encrypter or a decrypter by calling the `encrypter` or `decrypter` methods respectively, and passing a public or private key.
-
 ```rust
-use openssl::rsa::Rsa;
 use file_crypter::FileCrypter;
-
-let private_key = Rsa::generate(2048).unwrap();
-let public_key = Rsa::public_key_from_pem(&private_key.public_key_to_pem().unwrap()).unwrap();
-
-let file_crypter = FileCrypter::new(public_key, private_key);
-```
-
-### Encrypting a file
-
-To encrypt a file, you need to provide a mutable reference to a reader object that implements the `Read` trait, a mutable reference to a writer object that implements the `Write` trait, and a reference to a value of any type that implements the `Serialize` trait, which is used to encrypt metadata about the file.
-
-```rust
+use openssl::rsa::Rsa;
 use std::fs::File;
 use std::io::{Read, Write};
-use file_crypter::FileCrypter;
 
-let mut input_file = File::open("plaintext.txt").unwrap();
-let mut output_file = File::create("encrypted.bin").unwrap();
+fn main() {
+    // Generate a 2048-bit RSA key pair
+    let rsa_key = Rsa::generate(2048).unwrap();
 
-let private_key = include_bytes!("private_key.pem");
+    // Create a FileCrypter instance with the public and private RSA keys
+    let file_crypter = FileCrypter::new(
+        Rsa::public_key_from_pem(&rsa_key.public_key_to_pem().unwrap()).unwrap(),
+        rsa_key,
+    );
 
-let metadata = Some("This is a metadata string.".to_string());
+    // Encrypt a file
+    let mut input_file = File::open("plaintext.txt").unwrap();
+    let mut output_file = File::create("encrypted.bin").unwrap();
+    let metadata = "This is a metadata string.".to_string();
+    file_crypter
+        .encrypt(&mut input_file, &mut output_file, &metadata)
+        .expect("Encryption failed");
 
-let file_crypter = FileCrypter::new(private_key).encrypt(&mut input_file, &mut output_file, &metadata);
+    // Decrypt a file
+    let mut input_file = File::open("encrypted.bin").unwrap();
+    let mut output_file = File::create("decrypted.txt").unwrap();
+    let decrypted_metadata: String = file_crypter
+        .decrypt(&mut input_file, &mut output_file)
+        .expect("Decryption failed");
 
-assert!(result.is_ok());
+    println!("Decrypted metadata: {}", decrypted_metadata);
+}
 ```
 
 ### Decrypting a file
@@ -59,40 +59,38 @@ assert_eq!(result.file_name, "test.txt");
 assert_eq!(output_stream.into_inner(), data);
 ```
 
-### File Structure
+## File Structure
 
-The encrypted file consists of a header followed by several encrypted sections:
+The `FileCrypter` library creates encrypted files with a specific structure to store the encrypted data and metadata. Here's a breakdown of the file structure:
 
-| Field | Size (bytes) | Description |
-| --- | --- | --- |
-| Header | 12 | The string "IDCRYPTER1.0" to identify the file format |
-| Encrypted AES key length | 4 | The length of the encrypted AES key in bytes |
-| Encrypted AES key | Variable | The AES key encrypted with the public key |
-| Encrypted IV length | 4 | The length of the encrypted IV in bytes |
-| Encrypted IV | Variable | The IV encrypted with the public key |
-| Encrypted metadata length | 4 | The length of the encrypted metadata in bytes |
-| Encrypted metadata | Variable | The metadata encrypted with the AES key |
-| Encrypted file contents | Variable | The file contents encrypted with the AES key |
+1. **Header**: The file starts with a 12-byte header that identifies the file as a `FileCrypter` encrypted file. The header is a constant value: `IDCRYPTER1.0`.
 
-### Header
+2. **Encrypted AES Key Length**: The next 4 bytes represent the length of the encrypted AES key as an unsigned 32-bit integer in big-endian format.
 
-The first 12 bytes of the file contain the header, which is a string identifying the file format. The header is always "IDCRYPTER1.0". If the header is not present or is invalid, the decryption process will fail.
+3. **Encrypted AES Key**: The encrypted AES key follows, with a length specified by the previous field. This key is encrypted using the RSA public key.
 
-### Encrypted AES Key
+4. **Encrypted IV Length**: A 4-byte field follows, representing the length of the encrypted Initialization Vector (IV) as an unsigned 32-bit integer in big-endian format.
 
-The next section of the file contains the encrypted AES key. The length of the encrypted key is stored as a 4-byte big-endian integer. The AES key is encrypted using RSA public key encryption with the recipient's public key. The encrypted AES key is used to encrypt the file contents.
+5. **Encrypted IV**: The encrypted IV follows, with a length specified by the previous field. The IV is encrypted using the RSA public key.
 
-### Encrypted IV
+6. **Encrypted Metadata Length**: The next 4 bytes represent the length of the encrypted metadata as an unsigned 32-bit integer in big-endian format.
 
-After the encrypted AES key, the next section of the file contains the encrypted IV. The length of the encrypted IV is stored as a 4-byte big-endian integer. The IV is encrypted using RSA public key encryption with the recipient's public key. The IV is used to initialize the AES cipher used to encrypt the file contents.
+7. **Encrypted Metadata**: The encrypted metadata follows, with a length specified by the previous field. The metadata is encrypted using the AES key and IV.
 
-### Encrypted Metadata
+8. **Encrypted File Contents**: The rest of the file contains the encrypted file contents. The file contents are encrypted using the AES key and IV.
 
-The next section of the file contains the encrypted metadata. The length of the encrypted metadata is stored as a 4-byte big-endian integer. The metadata is serialized using serde and then encrypted using AES encryption with the AES key.
+When decrypting a file, `FileCrypter` reads and processes these sections in order, decrypting the AES key and IV using the RSA private key, and then decrypting the metadata and file contents using the decrypted AES key and IV.
 
-### Encrypted File Contents
+Here's a visual representation of the file structure:
 
-The final section of the file contains the encrypted file contents. The file contents are encrypted using AES encryption with the AES key and the IV. The encrypted contents are written to the file in chunks, with each chunk being encrypted separately.
+```
++--------------+---------------------+----------------+-------------------+-------------+---------------------+----------------+--------------------+
+|    Header    | Encrypted AES Key L | Encrypted AES  | Encrypted IV Leng | Encrypted   | Encrypted Metadata  | Encrypted Meta | Encrypted File Con |
+|              | ength               | Key            | th                | IV          | Length              | data           | tents              |
++--------------+---------------------+----------------+-------------------+-------------+---------------------+----------------+--------------------+
+| 12 bytes     | 4 bytes             | Variable       | 4 bytes           | Variable    | 4 bytes             | Variable       | Remaining bytes    |
++--------------+---------------------+----------------+-------------------+-------------+---------------------+----------------+--------------------+
+```
 
 
 ### TODO
