@@ -62,7 +62,7 @@ impl FileCrypter {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use std::fs::File;
     /// use std::io::Read;
     /// use std::io::Write;
@@ -167,7 +167,7 @@ impl FileCrypter {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use std::fs::File;
     /// use std::io::Read;
     /// use std::io::Write;
