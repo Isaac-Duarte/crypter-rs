@@ -1,0 +1,19 @@
+[package]
+name = "sample_application"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+openssl = "0.10"
+clap = { version = "4.2.7", features = ["derive"] }
+file_crypter = { path = "../file_crypter" }
+serde = { version = "1.0.160", features = ["derive"] }
+
+[profile.release]
+opt-level = "z"  # Optimize for size.
+strip = true  # Automatically strip symbols from the binary.
+lto = true # Enable Link Time Optimization (LTO)
+codegen-units = 1 # Reduce Parallel Code Generation Units to Increase Optimization
+panic = "abort"
