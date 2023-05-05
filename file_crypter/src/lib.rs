@@ -71,7 +71,7 @@ impl FileCrypter {
     /// let mut input_file = File::open("plaintext.txt").unwrap();
     /// let mut output_file = File::create("encrypted.bin").unwrap();
     ///
-    /// let private_key = include_bytes!("private_key.pem");
+    /// let private_key = Rsa::generate(2048).unwrap();
     ///
     /// let metadata = Some("This is a metadata string.".to_string());
     ///
@@ -176,7 +176,7 @@ impl FileCrypter {
     /// let mut input_file = File::open("encrypted.bin").unwrap();
     /// let mut output_file = File::create("decrypted.txt").unwrap();
     ///
-    /// let private_key = include_bytes!("private_key.pem");
+    /// let private_key = Rsa::generate(2048).unwrap();
     ///
     /// let result = FileCrypter::decrypter(private_key).decrypt(&mut input_file, &mut output_file);
     ///
