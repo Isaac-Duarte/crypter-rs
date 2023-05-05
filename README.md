@@ -15,8 +15,7 @@ fn main() {
     let rsa_key = Rsa::generate(2048).unwrap();
 
     // Create a FileCrypter instance with the public and private RSA keys
-    let file_crypter = FileCrypter::new(
-        Rsa::public_key_from_pem(&rsa_key.public_key_to_pem().unwrap()).unwrap(),
+    let file_crypter = FileCrypter::decrypter(
         rsa_key,
     );
 
@@ -37,26 +36,6 @@ fn main() {
 
     println!("Decrypted metadata: {}", decrypted_metadata);
 }
-```
-
-### Decrypting a file
-
-To decrypt a file, you need to provide a mutable reference to a reader object that implements the `Read` trait and a mutable reference to a writer object that implements the `Write` trait.
-
-```rust
-use std::fs::File;
-use std::io::{Read, Write};
-use file_crypter::{decrypt, FileCrypter};
-
-let mut input_file = File::open("encrypted.bin").unwrap();
-let mut output_file = File::create("decrypted.txt").unwrap();
-
-let private_key = include_bytes!("private_key.pem");
-
-let result: Metadata = FileCrypter::decrypter(private_key).decrypt(&mut input_file, &mut output_file).expect("Unable to decrypt");
-
-assert_eq!(result.file_name, "test.txt");
-assert_eq!(output_stream.into_inner(), data);
 ```
 
 ## File Structure
@@ -91,9 +70,3 @@ Here's a visual representation of the file structure:
 | 12 bytes     | 4 bytes             | Variable       | 4 bytes           | Variable    | 4 bytes             | Variable       | Remaining bytes    |
 +--------------+---------------------+----------------+-------------------+-------------+---------------------+----------------+--------------------+
 ```
-
-
-### TODO
-
-- Improve error handling by adding custom error structs and implementing the `Error` trait for them.
-- Add more detailed error messages to aid debugging and make it easier to handle errors gracefully.
